@@ -1,4 +1,5 @@
 import os
+import uuid
 from dotenv import load_dotenv
 
 # Load environment variables before any other imports
@@ -88,10 +89,12 @@ async def process_invoice(
         raise HTTPException(status_code=500, detail="Unexpected error during OCR processing.")
 
     # --- Persist initial PENDING invoice record ---
+    # Use a UUID-based placeholder so re-uploading the same file never
+    # hits the unique constraint on invoice_number.
     try:
         repo = InvoiceRepository(db)
         invoice = Invoice(
-            invoice_number=f"PENDING-{file.filename}",
+            invoice_number=f"PENDING-{uuid.uuid4().hex[:8]}-{file.filename}",
             status=InvoiceStatus.PENDING,
             total_amount=0.0,
             tax_amount=0.0,
@@ -130,6 +133,7 @@ async def process_invoice(
     # --- Update invoice record with extracted values ---
     extracted = final_state.get("extracted_data", {})
     agent_status = final_state.get("status", "EXCEPTION")
+    exceptions_list = list(final_state.get("exceptions", []))
 
     status_map = {
         "STRAIGHT_THROUGH": InvoiceStatus.STRAIGHT_THROUGH,
@@ -137,28 +141,72 @@ async def process_invoice(
         "EXTRACTION_FAILED": InvoiceStatus.REJECTED,
     }
     db_status = status_map.get(agent_status, InvoiceStatus.REVIEW_REQUIRED)
+    extracted_invoice_number = extracted.get("invoice_number")
 
     try:
-        invoice.invoice_number = extracted.get("invoice_number") or invoice.invoice_number
+        # Refresh the session so it can query after the async agent ran
+        db.expire_all()
+
+        # --- Duplicate invoice number detection ---
+        if extracted_invoice_number:
+            existing = (
+                db.query(Invoice)
+                .filter(
+                    Invoice.invoice_number == extracted_invoice_number,
+                    Invoice.id != invoice_id,
+                )
+                .first()
+            )
+            if existing:
+                try:
+                    existing_status = existing.status.value
+                except Exception:
+                    existing_status = str(existing.status)
+                exceptions_list.append({
+                    "type": "DUPLICATE_INVOICE",
+                    "description": (
+                        f"Invoice number '{extracted_invoice_number}' was already submitted "
+                        f"(existing record ID: {existing.id}, status: {existing_status}). "
+                        "Duplicate invoices must be reviewed manually."
+                    ),
+                })
+                agent_status = "EXCEPTION"
+                db_status = InvoiceStatus.REVIEW_REQUIRED
+                logger.warning(
+                    f"Duplicate '{extracted_invoice_number}' detected "
+                    f"(new id={invoice_id}, existing id={existing.id})"
+                )
+
+        # --- Persist final invoice state ---
+        invoice.invoice_number = extracted_invoice_number or invoice.invoice_number
         invoice.total_amount = extracted.get("total_amount") or 0.0
         invoice.tax_amount = extracted.get("tax_amount") or 0.0
         invoice.currency = extracted.get("currency") or "USD"
         invoice.status = db_status
         db.commit()
 
-        if final_state.get("exceptions"):
-            repo.save_exceptions(invoice_id, final_state["exceptions"])
+        if exceptions_list:
+            repo.save_exceptions(invoice_id, exceptions_list)
+
     except SQLAlchemyError as exc:
         logger.error(f"Database error updating invoice {invoice_id}: {exc}")
-        # Non-fatal — agent result is still returned to the caller
+        db.rollback()
+
+    # Pull the extraction error out of reasoning for easy visibility
+    extraction_error = None
+    for step in final_state.get("reasoning", []):
+        if step.startswith("Extraction failed:"):
+            extraction_error = step
+            break
 
     return {
         "invoice_id": invoice_id,
         "invoice_number": invoice.invoice_number,
         "status": agent_status,
         "extracted_fields": extracted,
-        "exceptions": final_state.get("exceptions", []),
+        "exceptions": exceptions_list,
         "reasoning": final_state.get("reasoning", []),
+        "extraction_error": extraction_error,
     }
 
 

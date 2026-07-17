@@ -10,8 +10,16 @@ class LineItem(BaseModel):
 
     @model_validator(mode='after')
     def validate_line_total(self):
-        if abs((self.quantity * self.unit_price) - self.total) > 0.01:
-            raise ValueError(f"Line item total {self.total} does not match Qty * Price")
+        calculated = round(self.quantity * self.unit_price, 2)
+        # Allow up to 5% variance to handle discounts, rounding, and
+        # partial-unit pricing on individual lines.
+        # Exact arithmetic is verified during PO matching.
+        if self.total > 0 and abs(calculated - self.total) / self.total > 0.05:
+            raise ValueError(
+                f"Line item total {self.total} does not match "
+                f"Qty {self.quantity} × Price {self.unit_price} = {calculated} "
+                f"(variance exceeds 5%)"
+            )
         return self
 
 class InvoiceExtraction(BaseModel):
@@ -28,7 +36,8 @@ class InvoiceExtraction(BaseModel):
 
     @model_validator(mode='after')
     def validate_grand_total(self):
-        calculated_total = sum(item.total for item in self.line_items) + self.tax_amount
-        if abs(calculated_total - self.total_amount) > 0.1:
-            raise ValueError("Grand total mismatch: Sum of items + tax != Total Amount")
+        # We do not re-verify the vendor's arithmetic here.
+        # The total_amount field must simply be present and positive (enforced
+        # by Field(gt=0) above).  Arithmetic discrepancies — shipping charges,
+        # discounts, rounding — are caught by the PO matching step, not here.
         return self

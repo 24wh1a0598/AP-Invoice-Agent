@@ -80,9 +80,9 @@ async def extraction_node(state: dict) -> dict:
             "reasoning": state.get("reasoning", []) + [reasoning_entry],
         }
     except Exception as exc:
-        reasoning_entry = f"Extraction failed: {exc}"
+        reasoning_entry = f"Extraction failed: {type(exc).__name__}: {exc}"
         decision = "EXTRACTION_ERROR"
-        logger.error(f"extraction_node error for invoice {invoice_id}: {exc}")
+        logger.error(f"extraction_node error for invoice {invoice_id}: {type(exc).__name__}: {exc}")
         result = {
             "extracted_data": {},
             "reasoning": state.get("reasoning", []) + [reasoning_entry],

@@ -102,15 +102,25 @@ def main():
                     resp = requests.post(
                         f"{API_URL}/upload-invoice", files=files, timeout=120
                     )
-                    if resp.status_code == 200:
+                    # Try to parse JSON regardless of status code
+                    try:
                         result = resp.json()
-                        st.session_state["last_result"] = result
-                        st.success("Processing complete!")
-                    else:
-                        detail = resp.json().get("detail", resp.text)
-                        st.error(f"Processing failed ({resp.status_code}): {detail}")
+                    except Exception:
+                        st.error(f"Backend returned an unreadable response (HTTP {resp.status_code}): {resp.text[:300]}")
+                        result = None
+
+                    if result is not None:
+                        if resp.status_code == 200:
+                            st.session_state["last_result"] = result
+                            st.success("Processing complete!")
+                        else:
+                            detail = result.get("detail", resp.text)
+                            st.error(f"Processing failed ({resp.status_code}): {detail}")
+
                 except requests.exceptions.ConnectionError:
                     st.error("Cannot reach the backend. Is the FastAPI server running?")
+                except requests.exceptions.Timeout:
+                    st.error("Request timed out. The invoice may be complex — try again.")
                 except Exception as exc:
                     st.error(f"Unexpected error: {exc}")
 
