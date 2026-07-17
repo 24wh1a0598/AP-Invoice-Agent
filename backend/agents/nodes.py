@@ -1,5 +1,8 @@
 import os
 import logging
+import traceback
+import requests as http_requests
+import time
 from dotenv import load_dotenv
 from langchain_groq import ChatGroq
 from sqlalchemy.exc import SQLAlchemyError
@@ -13,12 +16,54 @@ from database import SessionLocal
 load_dotenv()
 logger = logging.getLogger("ap_agent.nodes")
 
-if not os.getenv("GROQ_API_KEY"):
-    logger.warning("GROQ_API_KEY not found in environment — LLM calls will fail.")
+# ---------------------------------------------------------------------------
+# DIAGNOSTIC: API key check at module load time
+# ---------------------------------------------------------------------------
+_groq_key = os.getenv("GROQ_API_KEY")
+if not _groq_key:
+    logger.error("DIAG: GROQ_API_KEY is NOT set in environment.")
+else:
+    logger.info(
+        f"DIAG: GROQ_API_KEY loaded. "
+        f"Length={len(_groq_key)}, "
+        f"Prefix={_groq_key[:7]}{'*' * (len(_groq_key) - 7)}"
+    )
+
+# ---------------------------------------------------------------------------
+# DIAGNOSTIC: Outbound connectivity probe at module load time
+# ---------------------------------------------------------------------------
+def _probe_groq_connectivity() -> None:
+    url = "https://api.groq.com"
+    try:
+        t0 = time.time()
+        r = http_requests.get(url, timeout=15)
+        elapsed = round(time.time() - t0, 2)
+        logger.info(
+            f"DIAG: Connectivity probe to {url} → "
+            f"status={r.status_code}, elapsed={elapsed}s, "
+            f"body_preview={r.text[:200]!r}"
+        )
+    except http_requests.exceptions.ConnectionError as exc:
+        logger.error(
+            f"DIAG: Connectivity probe FAILED — ConnectionError: {exc}\n"
+            f"Full traceback:\n{traceback.format_exc()}"
+        )
+    except http_requests.exceptions.Timeout as exc:
+        logger.error(
+            f"DIAG: Connectivity probe FAILED — Timeout after 15s: {exc}\n"
+            f"Full traceback:\n{traceback.format_exc()}"
+        )
+    except Exception as exc:
+        logger.error(
+            f"DIAG: Connectivity probe FAILED — {type(exc).__name__}: {exc}\n"
+            f"Full traceback:\n{traceback.format_exc()}"
+        )
+
+_probe_groq_connectivity()
 
 llm = ChatGroq(
     model="llama-3.3-70b-versatile",
-    api_key=os.getenv("GROQ_API_KEY"),
+    api_key=_groq_key,
 )
 
 
@@ -82,7 +127,13 @@ async def extraction_node(state: dict) -> dict:
     except Exception as exc:
         reasoning_entry = f"Extraction failed: {type(exc).__name__}: {exc}"
         decision = "EXTRACTION_ERROR"
-        logger.error(f"extraction_node error for invoice {invoice_id}: {type(exc).__name__}: {exc}")
+        logger.exception(
+            f"DIAG: extraction_node FULL TRACEBACK for invoice {invoice_id}. "
+            f"Exception type: {type(exc).__name__}. "
+            f"Exception args: {exc.args}. "
+            f"__cause__: {exc.__cause__}. "
+            f"__context__: {exc.__context__}."
+        )
         result = {
             "extracted_data": {},
             "reasoning": state.get("reasoning", []) + [reasoning_entry],

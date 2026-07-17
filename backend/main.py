@@ -46,6 +46,44 @@ def health_check():
 
 
 # ---------------------------------------------------------------------------
+# DIAGNOSTIC: connectivity + env check (REMOVE after root cause confirmed)
+# ---------------------------------------------------------------------------
+
+@app.get("/diag", tags=["Health"])
+def diag():
+    import requests as http_requests
+    import time
+
+    groq_key = os.getenv("GROQ_API_KEY")
+    key_info = {
+        "present": bool(groq_key),
+        "length": len(groq_key) if groq_key else 0,
+        "prefix": (groq_key[:7] + "***") if groq_key and len(groq_key) > 7 else "TOO_SHORT",
+    }
+
+    probe = {}
+    try:
+        t0 = time.time()
+        r = http_requests.get("https://api.groq.com", timeout=15)
+        probe = {
+            "reachable": True,
+            "status_code": r.status_code,
+            "elapsed_s": round(time.time() - t0, 2),
+            "body_preview": r.text[:300],
+        }
+    except Exception as exc:
+        import traceback
+        probe = {
+            "reachable": False,
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+            "traceback": traceback.format_exc(),
+        }
+
+    return {"groq_api_key": key_info, "groq_connectivity": probe}
+
+
+# ---------------------------------------------------------------------------
 # POST /upload-invoice — main processing endpoint
 # ---------------------------------------------------------------------------
 
