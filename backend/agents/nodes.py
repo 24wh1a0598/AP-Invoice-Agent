@@ -19,7 +19,7 @@ logger = logging.getLogger("ap_agent.nodes")
 # ---------------------------------------------------------------------------
 # DIAGNOSTIC: API key check at module load time
 # ---------------------------------------------------------------------------
-_groq_key = os.getenv("GROQ_API_KEY")
+_groq_key = os.getenv("GROQ_API_KEY", "").strip()
 if not _groq_key:
     logger.error("DIAG: GROQ_API_KEY is NOT set in environment.")
 else:
