@@ -46,8 +46,68 @@ def health_check():
 
 
 # ---------------------------------------------------------------------------
-# DIAGNOSTIC: connectivity + env check (REMOVE after root cause confirmed)
+# POST /seed-db — seeds reference data (vendor, PO, contract)
+# Call this once after first deploy to populate the database.
 # ---------------------------------------------------------------------------
+
+@app.post("/seed-db", tags=["Health"])
+def seed_db(db: Session = Depends(get_db)):
+    """
+    Seeds the database with the Dell vendor, PO-DELL-2024, and CTR-DELL-2024
+    reference data required to process the sample invoices.
+    Safe to call multiple times — skips records that already exist.
+    """
+    from models.models import Vendor, PurchaseOrder, Contract
+    results = []
+
+    try:
+        # --- Vendor ---
+        vendor = db.query(Vendor).filter(Vendor.vendor_code == "DELL-001").first()
+        if vendor:
+            results.append("Vendor DELL-001 already exists — skipped.")
+        else:
+            vendor = Vendor(name="Dell Technologies Inc.", vendor_code="DELL-001")
+            db.add(vendor)
+            db.flush()
+            results.append(f"Vendor created: Dell Technologies Inc. (id={vendor.id})")
+
+        # --- Purchase Order ---
+        if db.query(PurchaseOrder).filter(PurchaseOrder.po_number == "PO-DELL-2024").first():
+            results.append("PO PO-DELL-2024 already exists — skipped.")
+        else:
+            po = PurchaseOrder(
+                po_number="PO-DELL-2024",
+                vendor_id=vendor.id,
+                total_amount=10775.00,
+                status="OPEN",
+                line_items=[
+                    {"description": "Dell Latitude 5540 Laptop",      "quantity": 10.0, "unit_price": 850.00,  "total": 8500.00},
+                    {"description": 'Dell 27" Monitor P2723D',         "quantity": 5.0,  "unit_price": 320.00,  "total": 1600.00},
+                    {"description": "Dell Wireless Keyboard & Mouse",  "quantity": 15.0, "unit_price": 45.00,   "total": 675.00},
+                ],
+            )
+            db.add(po)
+            results.append("PO created: PO-DELL-2024 (total $10,775.00)")
+
+        # --- Contract ---
+        if db.query(Contract).filter(Contract.contract_number == "CTR-DELL-2024").first():
+            results.append("Contract CTR-DELL-2024 already exists — skipped.")
+        else:
+            contract = Contract(
+                contract_number="CTR-DELL-2024",
+                vendor_id=vendor.id,
+                max_amount=50000.00,
+            )
+            db.add(contract)
+            results.append("Contract created: CTR-DELL-2024 (max $50,000.00)")
+
+        db.commit()
+        return {"status": "ok", "results": results}
+
+    except SQLAlchemyError as exc:
+        db.rollback()
+        logger.error(f"seed_db error: {exc}")
+        raise HTTPException(status_code=500, detail=f"Seed failed: {exc}")
 
 @app.get("/diag", tags=["Health"])
 def diag():

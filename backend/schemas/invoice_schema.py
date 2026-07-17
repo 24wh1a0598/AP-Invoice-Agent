@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field, model_validator
 from typing import List, Optional
-from datetime import datetime
+from datetime import date
 
 class LineItem(BaseModel):
     description: str
@@ -26,7 +26,7 @@ class InvoiceExtraction(BaseModel):
     vendor_name: str = Field(..., min_length=2)
     vendor_id: str
     invoice_number: str
-    invoice_date: datetime
+    invoice_date: date
     po_number: Optional[str] = None
     contract_number: Optional[str] = None
     currency: str = Field(default="USD", min_length=3, max_length=3)
