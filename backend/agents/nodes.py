@@ -17,7 +17,7 @@ if not os.getenv("GROQ_API_KEY"):
     logger.warning("GROQ_API_KEY not found in environment — LLM calls will fail.")
 
 llm = ChatGroq(
-    model="openai/gpt-oss-120b",
+    model="llama-3.3-70b-versatile",
     api_key=os.getenv("GROQ_API_KEY"),
 )
 
