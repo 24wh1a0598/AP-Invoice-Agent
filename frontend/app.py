@@ -12,7 +12,10 @@ import os
 
 # In Docker, set API_URL=http://backend:8000 via environment variable.
 # Locally it defaults to localhost.
-API_URL = os.getenv("API_URL", "http://localhost:8000")
+try:
+    API_URL = st.secrets["API_URL"]
+except (KeyError, FileNotFoundError):
+    API_URL = os.getenv("API_URL", "http://localhost:8000")
 
 st.set_page_config(
     page_title="AP Invoice Exception Agent",
