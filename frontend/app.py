@@ -46,14 +46,43 @@ st.markdown("""
 # API helpers
 # ---------------------------------------------------------------------------
 
-def api_get(path: str) -> dict | list | None:
-    """GET request to the backend. Returns parsed JSON or None on error."""
+def _wake_backend() -> bool:
+    """
+    Sends a lightweight GET / to wake the Render free-tier instance.
+    Returns True if the backend is reachable, False otherwise.
+    Render free instances take 30-50 s to cold-start; we wait up to 60 s.
+    """
+    for attempt in range(3):
+        try:
+            resp = requests.get(f"{API_URL}/", timeout=(10, 20))
+            if resp.status_code == 200:
+                return True
+        except requests.exceptions.Timeout:
+            pass
+        except requests.exceptions.ConnectionError:
+            return False
+    return False
+
+
+def api_get(path: str, timeout: int = 30) -> dict | list | None:
+    """GET request to the backend. Returns parsed JSON or None on error.
+    Uses a (connect_timeout=10, read_timeout) tuple so cold-start connections
+    don't hang indefinitely.
+    """
     try:
-        resp = requests.get(f"{API_URL}{path}", timeout=10)
+        resp = requests.get(f"{API_URL}{path}", timeout=(10, timeout))
         resp.raise_for_status()
         return resp.json()
     except requests.exceptions.ConnectionError:
-        st.error("Cannot reach the backend. Is the FastAPI server running on port 8000?")
+        st.error("Cannot reach the backend — connection refused.")
+        return None
+    except requests.exceptions.Timeout:
+        # Backend is alive but slow (cold start or heavy query).
+        # Show a warning and let the caller handle None gracefully.
+        st.warning(
+            "⏳ Backend is waking up (Render free tier). "
+            "Please wait a moment and **refresh the page**."
+        )
         return None
     except requests.exceptions.HTTPError as exc:
         st.error(f"API error: {exc.response.status_code} — {exc.response.text}")
@@ -217,6 +246,16 @@ def main():
     # MAIN DASHBOARD TABS
     # -----------------------------------------------------------------------
     st.divider()
+
+    # --- Backend health check (handles Render cold start) ---
+    if "backend_ready" not in st.session_state:
+        with st.spinner("🔄 Connecting to backend — this may take up to 30s on first load (Render free tier)…"):
+            st.session_state["backend_ready"] = _wake_backend()
+
+    if not st.session_state["backend_ready"]:
+        st.error("Backend is unreachable. Check your Render deployment.")
+        return
+
     tab1, tab2, tab3 = st.tabs(
         ["📊 Dashboard", "📋 Recent Invoices", "🛡️ Audit Trail"]
     )
