@@ -130,6 +130,105 @@ class InvoiceRepository:
             self.db.add(record)
         self.db.commit()
 
+    # --- Vendor risk aggregates ---
+
+    def get_vendor_by_id(self, vendor_id: int):
+        """Return the Vendor ORM object for a given vendor_id, or None."""
+        from models.models import Vendor
+        return self.db.query(Vendor).filter(Vendor.id == vendor_id).first()
+
+    def get_invoices_for_vendor(self, vendor_id: int) -> List[Invoice]:
+        """
+        Return all non-PENDING invoices whose PO links back to this vendor.
+
+        Invoices are linked to vendors indirectly:
+            Invoice.po_number → PurchaseOrder.po_number → PurchaseOrder.vendor_id
+
+        Invoice.vendor_id is a nullable column that the current pipeline does not
+        populate, so we cannot rely on it.  The join through PurchaseOrder is the
+        only reliable path.  Invoices with no PO (MISSING_PO exception cases) do
+        not appear here — they have no vendor link in the DB.
+        """
+        from models.models import PurchaseOrder, InvoiceStatus
+
+        return (
+            self.db.query(Invoice)
+            .join(PurchaseOrder, Invoice.po_number == PurchaseOrder.po_number)
+            .filter(
+                PurchaseOrder.vendor_id == vendor_id,
+                Invoice.invoice_number.notlike("PENDING-%"),
+                Invoice.status != InvoiceStatus.PENDING,
+            )
+            .all()
+        )
+
+    def get_exception_counts_for_vendor(self, vendor_id: int) -> dict:
+        """
+        Return a dict mapping exception_type → count for all exceptions raised
+        on invoices linked to this vendor.
+
+        Uses a single SQL query with GROUP BY rather than loading every exception
+        row into memory.
+        """
+        from models.models import PurchaseOrder
+
+        rows = (
+            self.db.query(
+                InvoiceException.exception_type,
+                func.count(InvoiceException.id).label("cnt"),
+            )
+            .join(Invoice, InvoiceException.invoice_id == Invoice.id)
+            .join(PurchaseOrder, Invoice.po_number == PurchaseOrder.po_number)
+            .filter(
+                PurchaseOrder.vendor_id == vendor_id,
+                Invoice.invoice_number.notlike("PENDING-%"),
+            )
+            .group_by(InvoiceException.exception_type)
+            .all()
+        )
+        return {row.exception_type: row.cnt for row in rows}
+
+    def get_recent_invoice_and_exception_counts(
+        self, vendor_id: int, days: int = 30
+    ) -> tuple[int, int]:
+        """
+        Return (invoice_count, exception_count) for invoices submitted in the
+        last `days` days, for this vendor.
+
+        Used for the recency signal in vendor risk scoring.
+        """
+        import datetime as _dt
+        from models.models import PurchaseOrder
+
+        since = _dt.datetime.utcnow() - _dt.timedelta(days=days)
+
+        invoice_count = (
+            self.db.query(func.count(Invoice.id))
+            .join(PurchaseOrder, Invoice.po_number == PurchaseOrder.po_number)
+            .filter(
+                PurchaseOrder.vendor_id == vendor_id,
+                Invoice.invoice_number.notlike("PENDING-%"),
+                Invoice.created_at >= since,
+            )
+            .scalar()
+            or 0
+        )
+
+        exception_count = (
+            self.db.query(func.count(InvoiceException.id))
+            .join(Invoice, InvoiceException.invoice_id == Invoice.id)
+            .join(PurchaseOrder, Invoice.po_number == PurchaseOrder.po_number)
+            .filter(
+                PurchaseOrder.vendor_id == vendor_id,
+                Invoice.invoice_number.notlike("PENDING-%"),
+                Invoice.created_at >= since,
+            )
+            .scalar()
+            or 0
+        )
+
+        return invoice_count, exception_count
+
     # --- Audit Log ---
 
     def create_audit_log(self, invoice_id: int, agent_name: str, action: str, details: dict = None) -> None:

@@ -444,5 +444,33 @@ def get_stats(db: Session = Depends(get_db)):
     }
 
 
+# ---------------------------------------------------------------------------
+# GET /vendor/{vendor_id}/risk — vendor risk intelligence
+# ---------------------------------------------------------------------------
+
+@app.get("/vendor/{vendor_id}/risk", tags=["Vendor Risk"])
+def get_vendor_risk(vendor_id: int, db: Session = Depends(get_db)):
+    """
+    Returns a deterministic risk score and explanation for the given vendor.
+
+    The score (0–100) is calculated from historical invoice and exception data
+    already stored in the database — no LLM call is made.
+
+    Risk levels: LOW (0–29) | MEDIUM (30–59) | HIGH (60–79) | CRITICAL (80–100)
+    """
+    from services.vendor_risk_service import VendorRiskService
+
+    repo = InvoiceRepository(db)
+    try:
+        report = VendorRiskService(repo).calculate(vendor_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except SQLAlchemyError as exc:
+        logger.error(f"Database error calculating vendor risk for vendor {vendor_id}: {exc}")
+        raise HTTPException(status_code=500, detail="Database error calculating vendor risk.")
+
+    return report.to_dict()
+
+
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8000)
