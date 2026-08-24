@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, date
 
 
 class MatchingEngine:
@@ -55,20 +55,28 @@ class MatchingEngine:
 
         Returns an exception description string, or None if compliant.
         contract fields used: end_date (datetime), max_amount (float)
-        invoice_data fields used: invoice_date (str/datetime), total_amount (float)
+        invoice_data fields used: invoice_date (str/date/datetime), total_amount (float)
         """
-        # Resolve invoice date — may be a string or datetime
+        # Resolve invoice date — may be a string, date, or datetime
         invoice_date = invoice_data.get("invoice_date")
         if isinstance(invoice_date, str):
             try:
-                invoice_date = datetime.fromisoformat(invoice_date)
+                # Handle both "2024-07-01" and "2024-07-01T00:00:00"
+                invoice_date = date.fromisoformat(invoice_date.split("T")[0])
             except ValueError:
                 return "Invalid invoice date format — cannot verify contract compliance"
+        elif isinstance(invoice_date, datetime):
+            invoice_date = invoice_date.date()
 
         # Contract expiry check
         if hasattr(contract, "end_date") and contract.end_date:
-            if invoice_date and invoice_date > contract.end_date:
-                return f"Contract expired on {contract.end_date.date()}"
+            contract_end = (
+                contract.end_date.date()
+                if isinstance(contract.end_date, datetime)
+                else contract.end_date
+            )
+            if invoice_date and invoice_date > contract_end:
+                return f"Contract expired on {contract_end}"
 
         # Contract amount limit check
         total = invoice_data.get("total_amount", 0)
