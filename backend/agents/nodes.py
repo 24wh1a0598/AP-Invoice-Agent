@@ -10,6 +10,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from schemas.invoice_schema import InvoiceExtraction
 from services.matching import MatchingEngine
 from services.audit_service import AuditService
+from services.duplicate_service import DuplicateService
 from repositories.invoice_repo import InvoiceRepository
 from database import SessionLocal
 
@@ -207,7 +208,98 @@ async def validation_node(state: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Node 3: Matching
+# Node 3: Duplicate Check
+# ---------------------------------------------------------------------------
+
+async def duplicate_check_node(state: dict) -> dict:
+    """
+    Checks whether the extracted invoice is an exact or possible duplicate of
+    an invoice already in the database.
+
+    Exact duplicate  (same invoice_number)      → DUPLICATE_INVOICE exception
+    Possible duplicate (same amount + date window, different number) → POSSIBLE_DUPLICATE exception
+
+    Both exception types accumulate into the exceptions list exactly like PO /
+    contract mismatches; decision_node handles the final routing unchanged.
+
+    This node is skipped automatically when status == EXTRACTION_FAILED because
+    the graph routes around it in that case (see graph.py).
+    """
+    invoice_id = state.get("invoice_id", 0)
+    data = state.get("extracted_data", {})
+    reasoning = list(state.get("reasoning", []))
+    exceptions = list(state.get("exceptions", []))
+
+    invoice_number = data.get("invoice_number")
+    total_amount = data.get("total_amount")
+    invoice_date = data.get("invoice_date")  # date object or ISO string from extraction
+
+    # Normalise invoice_date to a date object if it arrived as a string
+    if isinstance(invoice_date, str):
+        try:
+            from datetime import date as _date
+            invoice_date = _date.fromisoformat(invoice_date.split("T")[0])
+        except ValueError:
+            invoice_date = None
+
+    db = SessionLocal()
+    try:
+        repo = InvoiceRepository(db)
+        svc = DuplicateService(repo)
+
+        # --- 1. Exact duplicate check ---
+        if invoice_number:
+            exc = svc.check_exact_duplicate(
+                invoice_number=invoice_number,
+                current_invoice_id=invoice_id,
+            )
+            if exc:
+                _audit(invoice_id, "duplicate_check_node", exc["type"], exc["description"])
+                reasoning.append(f"Duplicate check: {exc['type']} — {exc['description']}")
+                return {
+                    "exceptions": exceptions + [exc],
+                    "reasoning": reasoning,
+                }
+
+        # --- 2. Possible duplicate check (only when no exact match found) ---
+        if invoice_number and total_amount is not None:
+            exc = svc.check_possible_duplicate(
+                invoice_number=invoice_number,
+                total_amount=float(total_amount),
+                invoice_date=invoice_date,
+                current_invoice_id=invoice_id,
+            )
+            if exc:
+                _audit(invoice_id, "duplicate_check_node", exc["type"], exc["description"])
+                reasoning.append(f"Duplicate check: {exc['type']} — {exc['description']}")
+                return {
+                    "exceptions": exceptions + [exc],
+                    "reasoning": reasoning,
+                }
+
+        note = "Duplicate check passed — no matching invoices found."
+        _audit(invoice_id, "duplicate_check_node", "DUPLICATE_CHECK_PASSED", note)
+        reasoning.append(f"Duplicate check: {note}")
+        return {"reasoning": reasoning}
+
+    except SQLAlchemyError as exc:
+        desc = f"Database error during duplicate check: {exc}"
+        exceptions.append({"type": "DB_ERROR", "description": desc})
+        reasoning.append(desc)
+        logger.error(desc)
+        return {"exceptions": exceptions, "reasoning": reasoning}
+    except Exception as exc:
+        desc = f"Unexpected error in duplicate_check_node: {exc}"
+        exceptions.append({"type": "MATCHING_ERROR", "description": desc})
+        reasoning.append(desc)
+        logger.error(desc)
+        return {"exceptions": exceptions, "reasoning": reasoning}
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
+# Node 4: Matching (PO + Contract)
 # ---------------------------------------------------------------------------
 
 async def matching_node(state: dict) -> dict:
@@ -315,7 +407,7 @@ async def matching_node(state: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Node 4: Decision
+# Node 5: Decision
 # ---------------------------------------------------------------------------
 
 async def decision_node(state: dict) -> dict:

@@ -1,3 +1,7 @@
+from datetime import date, timedelta
+from typing import List, Optional
+
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from models.models import Invoice, AuditLog, PurchaseOrder, Contract, InvoiceException
 
@@ -15,6 +19,83 @@ class InvoiceRepository:
 
     def get_contract(self, contract_number: str):
         return self.db.query(Contract).filter(Contract.contract_number == contract_number).first()
+
+    # --- Duplicate detection ---
+
+    def find_by_invoice_number(
+        self, invoice_number: str, exclude_id: int = 0
+    ) -> Optional[Invoice]:
+        """
+        Returns the first persisted invoice whose invoice_number exactly matches,
+        excluding the record currently being processed (exclude_id).
+
+        PENDING-prefixed placeholders created by main.py before the pipeline runs
+        will never match a real extracted invoice number, so they are naturally
+        excluded without an extra filter.
+        """
+        return (
+            self.db.query(Invoice)
+            .filter(
+                Invoice.invoice_number == invoice_number,
+                Invoice.id != exclude_id,
+            )
+            .first()
+        )
+
+    def find_possible_duplicates(
+        self,
+        total_amount: float,
+        invoice_date: Optional[date],
+        exclude_id: int = 0,
+        amount_tolerance: float = 0.01,
+        date_window_days: int = 7,
+    ) -> List[Invoice]:
+        """
+        Returns previously processed invoices with the same total amount that
+        were *submitted* (created_at) within ±date_window_days of today.
+
+        The date window is anchored on the current submission date (today),
+        not the printed invoice_date from the document.  This is the correct
+        semantic: "was a same-amount invoice submitted to this system recently?"
+        which is the re-submission pattern we want to catch.
+
+        invoice_date is accepted as a parameter so callers can pass it for
+        future enrichment (e.g. comparing document dates directly once an
+        invoice_date column is added to Invoice), but the query does not use it
+        as the window anchor.
+
+        Conservative by design:
+        - Excludes the current PENDING record (exclude_id).
+        - Excludes all PENDING-prefixed placeholders (not yet processed).
+        - Only looks at amount + submission date window.
+        - Does NOT flag REJECTED invoices as possible duplicates.
+        """
+        from models.models import InvoiceStatus
+        import datetime as _dt
+
+        today = _dt.date.today()
+        date_from = today - timedelta(days=date_window_days)
+        date_to = today + timedelta(days=date_window_days)
+
+        q = (
+            self.db.query(Invoice)
+            .filter(
+                Invoice.id != exclude_id,
+                Invoice.invoice_number.notlike("PENDING-%"),
+                Invoice.total_amount.between(
+                    total_amount - amount_tolerance,
+                    total_amount + amount_tolerance,
+                ),
+                # Exclude already-rejected invoices — they are not "in flight"
+                Invoice.status != InvoiceStatus.REJECTED,
+                # Window is on submission timestamp (created_at), not document date
+                func.date(Invoice.created_at).between(
+                    date_from.isoformat(), date_to.isoformat()
+                ),
+            )
+        )
+
+        return q.all()
 
     # --- Invoice ---
 

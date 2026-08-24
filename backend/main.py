@@ -245,36 +245,6 @@ async def process_invoice(
         # Refresh the session so it can query after the async agent ran
         db.expire_all()
 
-        # --- Duplicate invoice number detection ---
-        if extracted_invoice_number:
-            existing = (
-                db.query(Invoice)
-                .filter(
-                    Invoice.invoice_number == extracted_invoice_number,
-                    Invoice.id != invoice_id,
-                )
-                .first()
-            )
-            if existing:
-                try:
-                    existing_status = existing.status.value
-                except Exception:
-                    existing_status = str(existing.status)
-                exceptions_list.append({
-                    "type": "DUPLICATE_INVOICE",
-                    "description": (
-                        f"Invoice number '{extracted_invoice_number}' was already submitted "
-                        f"(existing record ID: {existing.id}, status: {existing_status}). "
-                        "Duplicate invoices must be reviewed manually."
-                    ),
-                })
-                agent_status = "EXCEPTION"
-                db_status = InvoiceStatus.REVIEW_REQUIRED
-                logger.warning(
-                    f"Duplicate '{extracted_invoice_number}' detected "
-                    f"(new id={invoice_id}, existing id={existing.id})"
-                )
-
         # --- Persist final invoice state ---
         invoice.invoice_number = extracted_invoice_number or invoice.invoice_number
         invoice.total_amount = extracted.get("total_amount") or 0.0
