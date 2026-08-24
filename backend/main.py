@@ -445,6 +445,195 @@ def get_stats(db: Session = Depends(get_db)):
 
 
 # ---------------------------------------------------------------------------
+# GET /invoices/review-queue — human review queue
+# ---------------------------------------------------------------------------
+
+@app.get("/invoices/review-queue", tags=["Human Review"])
+def get_review_queue(
+    skip: int = 0,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+):
+    """
+    Returns invoices currently requiring human review, ordered oldest-first
+    so AP clerks work through the queue in submission order.
+
+    Each item includes enough context for the reviewer: invoice metadata,
+    all raised exceptions, and vendor / PO references.
+    """
+    from repositories.invoice_repo import InvoiceRepository
+
+    repo = InvoiceRepository(db)
+    try:
+        invoices = repo.get_review_queue(skip=skip, limit=limit)
+    except SQLAlchemyError as exc:
+        logger.error(f"Database error fetching review queue: {exc}")
+        raise HTTPException(status_code=500, detail="Database error fetching review queue.")
+
+    result = []
+    for inv in invoices:
+        exceptions = (
+            db.query(InvoiceException)
+            .filter(InvoiceException.invoice_id == inv.id)
+            .all()
+        )
+        result.append({
+            "id": inv.id,
+            "invoice_number": inv.invoice_number,
+            "vendor": inv.vendor.name if inv.vendor else None,
+            "po_number": inv.po_number,
+            "total_amount": inv.total_amount,
+            "currency": inv.currency,
+            "status": inv.status.value if inv.status else "UNKNOWN",
+            "created_at": inv.created_at.isoformat() if inv.created_at else None,
+            "exceptions": [
+                {"type": e.exception_type, "description": e.description}
+                for e in exceptions
+            ],
+        })
+    return result
+
+
+# ---------------------------------------------------------------------------
+# PATCH /invoice/{id}/approve — approve a flagged invoice
+# ---------------------------------------------------------------------------
+
+@app.patch("/invoice/{invoice_id}/approve", tags=["Human Review"])
+def approve_invoice(
+    invoice_id: int,
+    body: dict,
+    db: Session = Depends(get_db),
+):
+    """
+    Approve a REVIEW_REQUIRED invoice.
+
+    Request body:
+        { "acted_by": "alice@corp.com" }
+
+    - acted_by: Identity of the approver (required).
+      NOTE: No authentication system exists yet.  The caller supplies
+      their identity as a plain string.  This will be replaced with a
+      JWT claim when authentication is added.
+
+    State transition: REVIEW_REQUIRED → APPROVED
+    All other transitions are rejected with HTTP 422.
+    """
+    from services.approval_service import ApprovalService, ApprovalError
+
+    acted_by = (body.get("acted_by") or "").strip()
+    if not acted_by:
+        raise HTTPException(status_code=422, detail="acted_by is required.")
+
+    repo = InvoiceRepository(db)
+    try:
+        result = ApprovalService(repo).approve(invoice_id, acted_by=acted_by)
+    except ApprovalError as exc:
+        raise HTTPException(status_code=exc.http_code, detail=str(exc))
+    except SQLAlchemyError as exc:
+        logger.error(f"Database error approving invoice {invoice_id}: {exc}")
+        raise HTTPException(status_code=500, detail="Database error during approval.")
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# PATCH /invoice/{id}/reject — reject a flagged invoice
+# ---------------------------------------------------------------------------
+
+@app.patch("/invoice/{invoice_id}/reject", tags=["Human Review"])
+def reject_invoice(
+    invoice_id: int,
+    body: dict,
+    db: Session = Depends(get_db),
+):
+    """
+    Reject a REVIEW_REQUIRED invoice.
+
+    Request body:
+        {
+            "acted_by": "bob@corp.com",
+            "rejection_reason": "Price inflated compared to contract terms."
+        }
+
+    - acted_by: Identity of the rejector (required).
+    - rejection_reason: Non-empty explanation (required).
+
+    State transition: REVIEW_REQUIRED → REJECTED
+    All other transitions are rejected with HTTP 422.
+    """
+    from services.approval_service import ApprovalService, ApprovalError
+
+    acted_by = (body.get("acted_by") or "").strip()
+    rejection_reason = (body.get("rejection_reason") or "").strip()
+
+    if not acted_by:
+        raise HTTPException(status_code=422, detail="acted_by is required.")
+
+    repo = InvoiceRepository(db)
+    try:
+        result = ApprovalService(repo).reject(
+            invoice_id,
+            acted_by=acted_by,
+            rejection_reason=rejection_reason,
+        )
+    except ApprovalError as exc:
+        raise HTTPException(status_code=exc.http_code, detail=str(exc))
+    except SQLAlchemyError as exc:
+        logger.error(f"Database error rejecting invoice {invoice_id}: {exc}")
+        raise HTTPException(status_code=500, detail="Database error during rejection.")
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# POST /invoice/{id}/request-info — request additional information
+# ---------------------------------------------------------------------------
+
+@app.post("/invoice/{invoice_id}/request-info", tags=["Human Review"])
+def request_invoice_info(
+    invoice_id: int,
+    body: dict,
+    db: Session = Depends(get_db),
+):
+    """
+    Request additional information for a REVIEW_REQUIRED invoice.
+
+    Request body:
+        {
+            "acted_by": "carol@corp.com",
+            "message": "Please provide the original signed delivery note."
+        }
+
+    - acted_by: Identity of the requestor (required).
+    - message: Non-empty description of what is needed (required).
+
+    The invoice status remains REVIEW_REQUIRED.  An audit log entry is created.
+    """
+    from services.approval_service import ApprovalService, ApprovalError
+
+    acted_by = (body.get("acted_by") or "").strip()
+    message = (body.get("message") or "").strip()
+
+    if not acted_by:
+        raise HTTPException(status_code=422, detail="acted_by is required.")
+
+    repo = InvoiceRepository(db)
+    try:
+        result = ApprovalService(repo).request_info(
+            invoice_id,
+            acted_by=acted_by,
+            message=message,
+        )
+    except ApprovalError as exc:
+        raise HTTPException(status_code=exc.http_code, detail=str(exc))
+    except SQLAlchemyError as exc:
+        logger.error(f"Database error on request-info for invoice {invoice_id}: {exc}")
+        raise HTTPException(status_code=500, detail="Database error during request-info.")
+
+    return result
+
+
+# ---------------------------------------------------------------------------
 # GET /vendor/{vendor_id}/risk — vendor risk intelligence
 # ---------------------------------------------------------------------------
 

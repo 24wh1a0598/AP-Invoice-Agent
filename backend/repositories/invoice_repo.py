@@ -130,6 +130,31 @@ class InvoiceRepository:
             self.db.add(record)
         self.db.commit()
 
+    # --- Human review queue ---
+
+    def get_review_queue(self, skip: int = 0, limit: int = 50) -> List[Invoice]:
+        """
+        Return invoices in REVIEW_REQUIRED status ordered oldest-first so AP
+        clerks work through them in submission order.
+
+        Excludes PENDING-prefixed placeholder rows created before the agent
+        pipeline runs — those are never in REVIEW_REQUIRED status, but the
+        filter is explicit for safety.
+        """
+        from models.models import InvoiceStatus
+
+        return (
+            self.db.query(Invoice)
+            .filter(
+                Invoice.status == InvoiceStatus.REVIEW_REQUIRED,
+                Invoice.invoice_number.notlike("PENDING-%"),
+            )
+            .order_by(Invoice.created_at.asc())
+            .offset(skip)
+            .limit(limit)
+            .all()
+        )
+
     # --- Vendor risk aggregates ---
 
     def get_vendor_by_id(self, vendor_id: int):

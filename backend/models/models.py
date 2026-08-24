@@ -55,12 +55,22 @@ class Invoice(Base):
     vendor_id = Column(Integer, ForeignKey("vendors.id"))
     po_number = Column(String, ForeignKey("purchase_orders.po_number"), nullable=True)
     contract_number = Column(String, ForeignKey("contracts.contract_number"), nullable=True)
-    
+
     total_amount = Column(Float)
     tax_amount = Column(Float)
     currency = Column(String, default="USD")
     status = Column(Enum(InvoiceStatus), default=InvoiceStatus.PENDING)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    # --- Human review fields (v2) ---
+    # Identity of the AP clerk / finance controller who acted on the invoice.
+    # NOTE: no authentication system exists yet; this is supplied by the caller
+    # as a plain string in the request body and stored as-is for audit purposes.
+    approved_by = Column(String, nullable=True)
+    # Free-text reason required when an invoice is rejected.
+    rejection_reason = Column(Text, nullable=True)
+    # Timestamp of the human action (approve / reject / request-info).
+    action_at = Column(DateTime, nullable=True)
 
     # Relationships
     vendor = relationship("Vendor", back_populates="invoices")
