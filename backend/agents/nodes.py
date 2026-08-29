@@ -63,7 +63,7 @@ def _probe_groq_connectivity() -> None:
 _probe_groq_connectivity()
 
 llm = ChatGroq(
-    model="llama-3.3-70b-versatile",
+    model="openai/gpt-oss-120b",
     api_key=_groq_key,
 )
 
