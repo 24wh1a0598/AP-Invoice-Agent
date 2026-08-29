@@ -92,6 +92,54 @@ def api_get(path: str, timeout: int = 30) -> dict | list | None:
         return None
 
 
+def api_post(path: str, body: dict, timeout: int = 30) -> dict | None:
+    """POST request with a JSON body. Returns parsed JSON or None on error."""
+    try:
+        resp = requests.post(f"{API_URL}{path}", json=body, timeout=(10, timeout))
+        resp.raise_for_status()
+        return resp.json()
+    except requests.exceptions.ConnectionError:
+        st.error("Cannot reach the backend — connection refused.")
+        return None
+    except requests.exceptions.Timeout:
+        st.warning("⏳ Request timed out. Please try again.")
+        return None
+    except requests.exceptions.HTTPError as exc:
+        try:
+            detail = exc.response.json().get("detail", exc.response.text)
+        except Exception:
+            detail = exc.response.text
+        st.error(f"Error {exc.response.status_code}: {detail}")
+        return None
+    except Exception as exc:
+        st.error(f"Unexpected error: {exc}")
+        return None
+
+
+def api_patch(path: str, body: dict, timeout: int = 30) -> dict | None:
+    """PATCH request with a JSON body. Returns parsed JSON or None on error."""
+    try:
+        resp = requests.patch(f"{API_URL}{path}", json=body, timeout=(10, timeout))
+        resp.raise_for_status()
+        return resp.json()
+    except requests.exceptions.ConnectionError:
+        st.error("Cannot reach the backend — connection refused.")
+        return None
+    except requests.exceptions.Timeout:
+        st.warning("⏳ Request timed out. Please try again.")
+        return None
+    except requests.exceptions.HTTPError as exc:
+        try:
+            detail = exc.response.json().get("detail", exc.response.text)
+        except Exception:
+            detail = exc.response.text
+        st.error(f"Error {exc.response.status_code}: {detail}")
+        return None
+    except Exception as exc:
+        st.error(f"Unexpected error: {exc}")
+        return None
+
+
 def status_badge(status: str) -> str:
     colour = {
         "STRAIGHT_THROUGH": "#10b981",
@@ -256,8 +304,8 @@ def main():
         st.error("Backend is unreachable. Check your Render deployment.")
         return
 
-    tab1, tab2, tab3 = st.tabs(
-        ["📊 Dashboard", "📋 Recent Invoices", "🛡️ Audit Trail"]
+    tab1, tab2, tab3, tab4 = st.tabs(
+        ["📊 Dashboard", "📋 Recent Invoices", "🛡️ Audit Trail", "👤 Human Review"]
     )
 
     # --- Tab 1: Stats ---
@@ -349,6 +397,163 @@ def main():
             st.info(
                 "Search for an invoice using the sidebar, then click 'Load Audit Trail'."
             )
+
+    # --- Tab 4: Human Review ---
+    with tab4:
+        st.write("#### 📥 Invoice Review Queue")
+        st.caption(
+            "Invoices routed here failed one or more automated checks. "
+            "Review the exceptions below and approve, reject, or request more information."
+        )
+
+        queue = api_get("/invoices/review-queue")
+
+        if queue is None:
+            # api_get already showed an error message
+            pass
+        elif len(queue) == 0:
+            st.success("✅ No invoices currently require human review.")
+        else:
+            st.info(f"{len(queue)} invoice(s) awaiting review.")
+
+            for item in queue:
+                inv_id     = item.get("id")
+                inv_num    = item.get("invoice_number", "—")
+                vendor     = item.get("vendor") or "—"
+                po_num     = item.get("po_number") or "—"
+                total      = item.get("total_amount", 0.0)
+                currency   = item.get("currency", "USD")
+                status     = item.get("status", "REVIEW_REQUIRED")
+                exceptions = item.get("exceptions", [])
+                created_at = (item.get("created_at") or "")[:19]
+
+                # Expander label: ID + invoice number + total
+                label = (
+                    f"Invoice #{inv_id} — {inv_num} — "
+                    f"{currency} {total:,.2f}"
+                )
+                with st.expander(label, expanded=False):
+
+                    # ---- Invoice metadata ----
+                    col_a, col_b, col_c = st.columns(3)
+                    col_a.markdown(f"**Vendor:** {vendor}")
+                    col_b.markdown(f"**PO Number:** {po_num}")
+                    col_c.markdown(f"**Submitted:** {created_at}")
+
+                    col_d, col_e = st.columns(2)
+                    col_d.markdown(f"**Total:** {currency} {total:,.2f}")
+                    col_e.markdown(
+                        f"**Status:** {status_badge(status)}",
+                        unsafe_allow_html=True,
+                    )
+
+                    # ---- Exceptions ----
+                    if exceptions:
+                        st.markdown("**Exceptions flagged by the agent:**")
+                        for exc in exceptions:
+                            st.error(
+                                f"**{exc.get('type', 'UNKNOWN')}** — "
+                                f"{exc.get('description', '')}"
+                            )
+                    else:
+                        st.info("No exception details stored.")
+
+                    st.divider()
+
+                    # ---- Action area ----
+                    # Use per-invoice session_state keys so text areas
+                    # for different invoices never share state.
+                    reject_key   = f"reject_reason_{inv_id}"
+                    req_info_key = f"req_info_msg_{inv_id}"
+
+                    action_col1, action_col2, action_col3 = st.columns(3)
+
+                    # --- Approve ---
+                    with action_col1:
+                        st.markdown("**Approve**")
+                        if st.button(
+                            "✅ Approve",
+                            key=f"approve_{inv_id}",
+                            use_container_width=True,
+                        ):
+                            result = api_patch(
+                                f"/invoice/{inv_id}/approve",
+                                {"acted_by": "Human Reviewer"},
+                            )
+                            if result is not None:
+                                st.success(
+                                    f"Invoice #{inv_id} approved. "
+                                    f"New status: **{result.get('status')}**"
+                                )
+                                st.rerun()
+
+                    # --- Reject ---
+                    with action_col2:
+                        st.markdown("**Reject**")
+                        reason = st.text_area(
+                            "Rejection reason",
+                            key=reject_key,
+                            height=68,
+                            placeholder="e.g. Price inflated vs. contract terms.",
+                            label_visibility="collapsed",
+                        )
+                        if st.button(
+                            "❌ Reject",
+                            key=f"reject_{inv_id}",
+                            use_container_width=True,
+                        ):
+                            if not reason.strip():
+                                st.warning(
+                                    "Please enter a rejection reason before rejecting."
+                                )
+                            else:
+                                result = api_patch(
+                                    f"/invoice/{inv_id}/reject",
+                                    {
+                                        "acted_by": "Human Reviewer",
+                                        "rejection_reason": reason.strip(),
+                                    },
+                                )
+                                if result is not None:
+                                    st.success(
+                                        f"Invoice #{inv_id} rejected. "
+                                        f"Reason recorded."
+                                    )
+                                    st.rerun()
+
+                    # --- Request Info ---
+                    with action_col3:
+                        st.markdown("**Request Info**")
+                        info_msg = st.text_area(
+                            "Information request message",
+                            key=req_info_key,
+                            height=68,
+                            placeholder="e.g. Please provide a signed delivery note.",
+                            label_visibility="collapsed",
+                        )
+                        if st.button(
+                            "💬 Request Info",
+                            key=f"reqinfo_{inv_id}",
+                            use_container_width=True,
+                        ):
+                            if not info_msg.strip():
+                                st.warning(
+                                    "Please enter a message before requesting info."
+                                )
+                            else:
+                                result = api_post(
+                                    f"/invoice/{inv_id}/request-info",
+                                    {
+                                        "acted_by": "Human Reviewer",
+                                        "message": info_msg.strip(),
+                                    },
+                                )
+                                if result is not None:
+                                    st.info(
+                                        f"Information requested for Invoice #{inv_id}. "
+                                        f"Invoice remains in review queue."
+                                    )
+                                    st.rerun()
 
 
 if __name__ == "__main__":
