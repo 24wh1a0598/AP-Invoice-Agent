@@ -661,5 +661,100 @@ def get_vendor_risk(vendor_id: int, db: Session = Depends(get_db)):
     return report.to_dict()
 
 
+# ---------------------------------------------------------------------------
+# POST /batch/process — synthetic batch evaluation
+# ---------------------------------------------------------------------------
+
+@app.post("/batch/process", tags=["Batch"])
+def batch_process(body: dict):
+    """
+    Generate a synthetic invoice batch, process it through the existing
+    pipeline, and return a structured evaluation report.
+
+    No real LLM calls are made — pre-seeded extracted_data bypasses the
+    extraction node.
+
+    Request body (all fields optional):
+    {
+        "count": 20,
+        "seed": 42,
+        "distribution": {
+            "CLEAN": 14,
+            "PO_PRICE_MISMATCH": 2,
+            "QUANTITY_MISMATCH": 1,
+            "UNKNOWN_PO": 1,
+            "CONTRACT_VIOLATION": 1,
+            "DUPLICATE": 1,
+            "EXTRACTION_FAILURE": 0
+        }
+    }
+
+    - count: total number of invoices (default 20). Ignored when distribution
+      is provided (the distribution counts are used directly).
+    - seed: integer random seed for reproducible shuffling (default None).
+    - distribution: explicit scenario distribution dict. If omitted, a
+      proportional distribution is built from DEFAULT_DISTRIBUTION scaled
+      to count.
+
+    Returns the full EvaluationReport as JSON.
+    """
+    from batch.invoice_generator import (
+        SyntheticInvoiceGenerator,
+        DEFAULT_DISTRIBUTION,
+        ALL_SCENARIOS,
+    )
+    from batch.batch_processor import BatchProcessor
+    from batch.evaluation_service import EvaluationService
+
+    count = int(body.get("count", 20))
+    seed = body.get("seed", None)
+    raw_dist = body.get("distribution", None)
+
+    # --- Build distribution ---
+    if raw_dist is not None:
+        # Caller supplied explicit counts — validate keys
+        unknown_keys = set(raw_dist) - set(ALL_SCENARIOS)
+        if unknown_keys:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Unknown scenario key(s) in distribution: {sorted(unknown_keys)}. "
+                       f"Valid keys: {ALL_SCENARIOS}",
+            )
+        distribution = {k: int(v) for k, v in raw_dist.items()}
+    else:
+        # Scale DEFAULT_DISTRIBUTION proportionally to requested count
+        total_default = sum(DEFAULT_DISTRIBUTION.values())  # 100
+        distribution = {}
+        allocated = 0
+        items = list(DEFAULT_DISTRIBUTION.items())
+        for i, (scenario, default_count) in enumerate(items):
+            if i == len(items) - 1:
+                # Last scenario gets the remainder to avoid rounding gaps
+                distribution[scenario] = count - allocated
+            else:
+                share = round(default_count / total_default * count)
+                distribution[scenario] = share
+                allocated += share
+        # Clamp negatives that rounding can produce for tiny counts
+        distribution = {k: max(0, v) for k, v in distribution.items()}
+
+    # --- Generate + process ---
+    try:
+        gen = SyntheticInvoiceGenerator(seed=seed)
+        invoices = gen.generate(distribution=distribution)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    try:
+        with BatchProcessor() as processor:
+            results = processor.process(invoices)
+    except Exception as exc:
+        logger.error(f"Batch processing error: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Batch processing failed: {exc}")
+
+    report = EvaluationService().evaluate(results)
+    return report.to_dict()
+
+
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8000)
