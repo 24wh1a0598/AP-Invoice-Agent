@@ -229,9 +229,9 @@ class BatchProcessor:
 
         try:
             with patch("agents.nodes.SessionLocal", mock_sl):
-                final_state = asyncio.get_event_loop().run_until_complete(
-                    app_agent.ainvoke(initial_state)
-                )
+                final_state = asyncio.run(
+    app_agent.ainvoke(initial_state)
+)
 
             actual_decision = final_state.get("status", "EXCEPTION")
             actual_exceptions = list(final_state.get("exceptions", []))
