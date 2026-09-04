@@ -24,21 +24,252 @@ st.set_page_config(
 )
 
 st.markdown("""
-    <style>
-    .main { background-color: #f8fafc; }
-    [data-testid="stMetric"] {
-        background-color: #1e2530;
-        padding: 15px;
-        border-radius: 10px;
-        border: 1px solid #2d3748;
-    }
-    [data-testid="stMetricLabel"] { color: #a0aec0 !important; }
-    [data-testid="stMetricValue"] { color: #f7fafc !important; }
-    [data-testid="stMetricDelta"] { color: #68d391 !important; }
-    .status-approved { color: #10b981; font-weight: bold; }
-    .status-review   { color: #f59e0b; font-weight: bold; }
-    .status-rejected { color: #ef4444; font-weight: bold; }
-    </style>
+<style>
+
+/* =========================
+   GLOBAL APP
+   ========================= */
+
+.stApp {
+    background: #0B1120;
+    color: #E5E7EB;
+}
+
+.main {
+    background: #0B1120;
+}
+
+/* Main content width */
+.block-container {
+    padding-top: 2.5rem;
+    padding-bottom: 3rem;
+}
+
+
+/* =========================
+   HEADINGS
+   ========================= */
+
+h1 {
+    color: #F8FAFC !important;
+    font-weight: 750 !important;
+    letter-spacing: -0.8px;
+}
+
+h2, h3 {
+    color: #F1F5F9 !important;
+}
+
+p, label {
+    color: #CBD5E1;
+}
+
+
+/* =========================
+   METRIC CARDS
+   ========================= */
+
+[data-testid="stMetric"] {
+    background: #111C2E;
+    padding: 20px 22px;
+    border-radius: 14px;
+    border: 1px solid #24344D;
+    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.18);
+    transition: all 0.2s ease;
+}
+
+[data-testid="stMetric"]:hover {
+    border-color: #38BDF8;
+    transform: translateY(-2px);
+}
+
+[data-testid="stMetricLabel"] {
+    color: #94A3B8 !important;
+    font-size: 0.85rem !important;
+    font-weight: 600 !important;
+}
+
+[data-testid="stMetricValue"] {
+    color: #F8FAFC !important;
+    font-size: 2rem !important;
+    font-weight: 700 !important;
+}
+
+[data-testid="stMetricDelta"] {
+    color: #22C55E !important;
+}
+
+
+/* =========================
+   SIDEBAR
+   ========================= */
+
+section[data-testid="stSidebar"] {
+    background: #0F172A;
+    border-right: 1px solid #1E293B;
+}
+
+section[data-testid="stSidebar"] h2,
+section[data-testid="stSidebar"] h3 {
+    color: #F8FAFC !important;
+}
+
+section[data-testid="stSidebar"] p {
+    color: #CBD5E1;
+}
+
+
+/* =========================
+   BUTTONS
+   ========================= */
+
+.stButton > button {
+    border-radius: 9px;
+    border: 1px solid #334155;
+    background: #172337;
+    color: #E2E8F0;
+    font-weight: 600;
+    transition: all 0.2s ease;
+}
+
+.stButton > button:hover {
+    border-color: #38BDF8;
+    color: #38BDF8;
+    background: #16283E;
+}
+
+
+/* =========================
+   FILE UPLOADER
+   ========================= */
+
+[data-testid="stFileUploader"] {
+    background: #0B1220;
+    border: 1px dashed #334155;
+    border-radius: 12px;
+    padding: 8px;
+}
+
+[data-testid="stFileUploader"]:hover {
+    border-color: #38BDF8;
+}
+
+
+/* =========================
+   INPUTS
+   ========================= */
+
+input, textarea {
+    background-color: #111827 !important;
+    color: #F8FAFC !important;
+    border-color: #334155 !important;
+}
+
+[data-baseweb="select"] > div {
+    background-color: #111827 !important;
+    border-color: #334155 !important;
+}
+
+
+/* =========================
+   TABS
+   ========================= */
+
+button[data-baseweb="tab"] {
+    color: #94A3B8 !important;
+    font-weight: 600;
+}
+
+button[data-baseweb="tab"][aria-selected="true"] {
+    color: #38BDF8 !important;
+}
+
+div[data-baseweb="tab-highlight"] {
+    background-color: #38BDF8 !important;
+}
+
+
+/* =========================
+   EXPANDERS
+   ========================= */
+
+[data-testid="stExpander"] {
+    background: #111C2E;
+    border: 1px solid #24344D;
+    border-radius: 12px;
+}
+
+[data-testid="stExpander"]:hover {
+    border-color: #334155;
+}
+
+
+/* =========================
+   DATAFRAMES
+   ========================= */
+
+[data-testid="stDataFrame"] {
+    border: 1px solid #24344D;
+    border-radius: 10px;
+}
+
+
+/* =========================
+   DIVIDERS
+   ========================= */
+
+hr {
+    border-color: #24344D !important;
+}
+
+
+/* =========================
+   STATUS COLORS
+   ========================= */
+
+.status-approved {
+    color: #22C55E;
+    font-weight: 700;
+}
+
+.status-review {
+    color: #F59E0B;
+    font-weight: 700;
+}
+
+.status-rejected {
+    color: #EF4444;
+    font-weight: 700;
+}
+
+
+/* =========================
+   SUCCESS / WARNING / ERROR
+   ========================= */
+
+div[data-testid="stAlert"] {
+    border-radius: 10px;
+}
+
+
+/* =========================
+   CAPTIONS
+   ========================= */
+
+.stCaption {
+    color: #64748B !important;
+}
+
+
+/* =========================
+   LINKS
+   ========================= */
+
+a {
+    color: #38BDF8 !important;
+}
+
+</style>
 """, unsafe_allow_html=True)
 
 
@@ -157,13 +388,51 @@ def status_badge(status: str) -> str:
 # ---------------------------------------------------------------------------
 
 def main():
-    st.title("📑 AP Invoice & Contract Agent")
-    st.subheader("Enterprise Accounts Payable Automation")
+    st.markdown(
+"""<div style="margin-bottom: 8px;">
+<div style="
+    font-size: 2.6rem;
+    font-weight: 750;
+    color: #F8FAFC;
+    letter-spacing: -1px;
+">
+📑 AP Invoice & Contract Agent
+</div>
+
+<div style="
+    font-size: 1.15rem;
+    font-weight: 650;
+    color: #38BDF8;
+    margin-top: 6px;
+    letter-spacing: 0.3px;
+">
+AI-POWERED FINANCE CONTROLLER
+</div>
+
+<div style="
+    font-size: 0.95rem;
+    color: #94A3B8;
+    margin-top: 8px;
+">
+Automating invoice validation, compliance checks,
+exception handling, and human approvals.
+</div>
+</div>""",
+unsafe_allow_html=True,
+)
 
     # -----------------------------------------------------------------------
     # SIDEBAR — Upload + Search
     # -----------------------------------------------------------------------
     with st.sidebar:
+        st.markdown(
+        "<h2 style='color:#38BDF8;'>⚡ Finance Controller</h2>",
+        unsafe_allow_html=True,
+        )
+        st.markdown(
+        "<p style='color:#94A3B8;'>Process and validate invoices automatically.</p>",
+        unsafe_allow_html=True,
+        )
         st.header("Upload Invoice")
         uploaded_file = st.file_uploader(
             "Drop PDF or image here", type=["pdf", "png", "jpg", "jpeg"]
@@ -207,7 +476,7 @@ def main():
         st.divider()
 
         # Invoice search
-        st.header("Lookup Invoice")
+        st.header("🔎 Lookup Invoice")
         search_id = st.number_input("Invoice ID", min_value=1, step=1, value=1)
         if st.button("🔍 Fetch Invoice"):
             data = api_get(f"/invoice/{int(search_id)}")
