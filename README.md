@@ -211,6 +211,8 @@ DUPLICATE	3
 
 The exception scenarios are intentionally represented in the evaluation batch. The objective is not to maximize automation blindly, but to automate clean transactions while reliably routing problematic transactions for review.
 
+**Architecture**
+
 ┌──────────────────────────────────────────────────────────────┐
 │                  Streamlit Frontend                          │
 │                                                              │
@@ -277,8 +279,8 @@ match
 decide
    ↓
 END
-Core state
 
+**Core state **
 The agent maintains processing state containing information such as:
 
 Raw extracted text
